@@ -6,22 +6,22 @@
   <title>Goose TD — Birthday Edition</title>
   <style>
     :root {
-      --bg:#0e1a11;       /* page bg */
-      --grass:#2f8f46;    /* map grass */
-      --river:#4ca3e2;    /* water */
-      --bridge:#8b5a2b;   /* bridge */
-      --path:#b38b5e;     /* dirt path */
-      --ink:#0a0a0a;      /* text */
-      --panel:#ffffff;    /* panel bg */
-      --panel-ink:#0f172a;/* panel text */
-      --accent:#10b981;   /* buttons */
+      --bg:#0e1a11;
+      --grass:#2f8f46;
+      --river:#4ca3e2;
+      --bridge:#8b5a2b;
+      --path:#b38b5e;
+      --ink:#0a0a0a;
+      --panel:#ffffff;
+      --panel-ink:#0f172a;
+      --accent:#10b981;
       --accent-2:#6366f1;
       --danger:#ef4444;
       --gold:#f59e0b;
     }
     *{box-sizing:border-box}
     body{margin:0;background:var(--bg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Helvetica,Arial,sans-serif;color:var(--panel)}
-    .wrap{display:grid;grid-template-columns: 1fr 320px;gap:14px;max-width:1280px;margin:14px auto;padding:14px}
+    .wrap{display:grid;grid-template-columns: 1fr 340px;gap:14px;max-width:1280px;margin:14px auto;padding:14px}
     canvas{background:#1d3d25;border-radius:14px;box-shadow:0 8px 28px rgba(0,0,0,.35)}
     aside{background:var(--panel);color:var(--panel-ink);border-radius:14px;padding:14px 14px 18px;box-shadow:0 8px 28px rgba(0,0,0,.35);display:flex;flex-direction:column;gap:12px}
     h1{font-size:18px;margin:0 0 4px}
@@ -45,9 +45,16 @@
     .bullet{width:12px;height:12px;border-radius:50%}
     .notice{background:#fff7ed;color:#7c2d12;border:1px solid #fed7aa;border-radius:10px;padding:10px 12px;font-size:13px}
     .muted{color:#6b7280}
-    .link{color:#2563eb;text-decoration:underline;cursor:pointer}
     .footer{margin-top:auto;font-size:12px;color:#64748b}
     .kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;background:#111827;color:#e5e7eb;border-radius:6px;padding:2px 6px;font-size:12px}
+
+    /* Damage panel */
+    .panel{background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:10px}
+    .dmg-grid{display:grid;grid-template-columns:1fr;gap:8px}
+    .dmg-card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:10px}
+    .dmg-card h4{margin:0 0 6px}
+    .good{color:#059669;font-weight:700}
+    .bad{color:#dc2626;font-weight:700}
   </style>
 </head>
 <body>
@@ -65,8 +72,14 @@
       </div>
 
       <div class="controls">
-        <button id="btnStart" class="primary">▶️ Start Wave</button>
-        <div class="notice">Place towers on the grass (not on the dirt path or river). Click a family member, then click the map to place. You can cancel with <span class="kbd">Esc</span>.</div>
+        <div class="row">
+          <button id="btnStart" class="primary">▶️ Start Wave</button>
+          <button id="btnSpeed" class="secondary small" title="Toggle game speed">⏩ Speed x1</button>
+          <button id="btnTips" class="small" title="Toggle tips">💡 Tips: On</button>
+        </div>
+        <div class="notice">Place towers on the grass (closer to the path is now allowed). Click a family member, then click the map to place. Cancel with <span class="kbd">Esc</span>.</div>
+        <button id="btnDmg" class="secondary">📊 Damage Multipliers</button>
+        <div id="dmgPanel" class="panel" style="display:none"></div>
         <div class="tower-list" id="towerList"></div>
         <div class="legend">
           <div class="chip"><span class="bullet" style="background:#f87171"></span> Mom (Dynamite)</div>
@@ -78,17 +91,12 @@
         </div>
       </div>
 
-      <div class="footer">High score (waves cleared): <span id="uiHigh">0</span>. This game autosaves best score in your browser.</div>
+      <div class="footer">High score (waves cleared): <span id="uiHigh">0</span>. Autosaves in your browser.</div>
     </aside>
   </div>
 
   <script>
   // Goose TD — Birthday Edition (single-file, no dependencies)
-  // Author: You + ChatGPT 🥳  
-  // Notes:
-  // - Place towers on grass. 10 waves of geese, culminating in a Super Goose boss.
-  // - High score saved in localStorage under key 'goose_td_high'.
-
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
 
@@ -100,27 +108,30 @@
     start: document.getElementById('btnStart'),
     reset: document.getElementById('btnReset'),
     towerList: document.getElementById('towerList'),
+    speed: document.getElementById('btnSpeed'),
+    tips: document.getElementById('btnTips'),
+    dmgBtn: document.getElementById('btnDmg'),
+    dmgPanel: document.getElementById('dmgPanel'),
   };
 
   const WIDTH = canvas.width;
   const HEIGHT = canvas.height;
 
-  // Map layout
-  const PATH_WIDTH = 30;          // visual width of dirt path
-  const NO_BUILD_PAD = 40;        // extra buffer where towers cannot be placed (from path)
+  // Map layout — tighter build buffer & U-shaped path around a central area
+  const PATH_WIDTH = 30;
+  const NO_BUILD_PAD = 10; // was 40 — allows closer placements near the path
 
   const RIVER = {x: 430, y: 160, w: 100, h: 280};
-  const BRIDGE = {x: 410, y: 210, w: 140, h: 80}; // a rectangle covering the river for visuals
+  const BRIDGE = {x: 410, y: 190, w: 140, h: 80};
 
-  // Path waypoints (from left to right; crosses the bridge area)
+  // New U-shaped path (three sides of a rectangle) — great for short-range towers in the middle
   const WAYPOINTS = [
-    {x:-40, y:120},
-    {x:220, y:120},
-    {x:320, y:170},
-    {x:480, y:190}, // across the bridge
-    {x:620, y:250},
-    {x:780, y:250},
-    {x:980, y:330}
+    {x:-40, y:260},
+    {x:220, y:200},      // approach top-left
+    {x:760, y:200},      // along top (crosses the bridge)
+    {x:760, y:420},      // down right side
+    {x:220, y:420},      // along bottom
+    {x:-40, y:420},      // exit off-screen left
   ];
 
   const clamp = (v, a, b)=> Math.max(a, Math.min(b, v));
@@ -136,8 +147,7 @@
   }
 
   function pointNearPath(p){
-    // Inside path band + buffer?
-    const threshold = (PATH_WIDTH/2) + NO_BUILD_PAD;
+    const threshold = (PATH_WIDTH/2) + NO_BUILD_PAD; // reduced so towers can snuggle up to the path
     for(let i=0;i<WAYPOINTS.length-1;i++){
       if(distPointToSegment(p, WAYPOINTS[i], WAYPOINTS[i+1]) <= threshold) return true;
     }
@@ -164,8 +174,8 @@
     mom:   {name:'Mom',   desc:'Throws dynamite (splash)',  color:'#f87171', cost:120, dmg:18,  range:120, fireRate:0.8, type:'splash', splash:42, projSpeed:220},
     dad:   {name:'Dad',   desc:'Bowls a bowling ball (pierce)', color:'#60a5fa', cost:100, dmg:10,  range:140, fireRate:0.6, type:'pierce', pierce:3, projSpeed:260},
     jake:  {name:'Jake',  desc:'Tosses a boulder',         color:'#fbbf24', cost:140, dmg:28,  range:150, fireRate:1.0, type:'projectile', projSpeed:210},
-    alex:  {name:'Alex',  desc:'Sword slashes (melee)',     color:'#34d399', cost:80,  dmg:6,   range:60,  fireRate:0.2, type:'melee'},
-    wasabi:{name:'Wasabi',desc:'Cat claws (rapid)',         color:'#a78bfa', cost:60,  dmg:2,   range:55,  fireRate:0.1, type:'melee'},
+    alex:  {name:'Alex',  desc:'Sword slashes (melee)',     color:'#34d399', cost:80,  dmg:6,   range:70,  fireRate:0.2, type:'melee'},
+    wasabi:{name:'Wasabi',desc:'Cat claws (rapid)',         color:'#a78bfa', cost:60,  dmg:2,   range:65,  fireRate:0.1, type:'melee'},
     adam:  {name:'Adam',  desc:'Throws a dumbbell',         color:'#f472b6', cost:90,  dmg:8,   range:130, fireRate:0.35,type:'projectile', projSpeed:250},
   };
 
@@ -179,7 +189,7 @@
     adam:  { gosling:1.1, adult:1.2, fast:1.0, tank:1.0, armored:1.0, golden:1.2, ninja:1.0, giant:1.0, boss:1.0 },
   };
 
-  // Waves config (10 waves)
+  // Waves
   const WAVES = [
     {name:'Goslings',    list:[['gosling',12]]},
     {name:'Adults',      list:[['adult',10]]},
@@ -197,17 +207,19 @@
   const state = {
     money: 250,
     lives: 20,
-    waveIndex: 0, // 0..9
+    waveIndex: 0,
     inWave: false,
     enemies: [],
     towers: [],
     projectiles: [],
-    placing: null, // {id, def}
+    placing: null,
     lastTime: 0,
     spawnTimer: 0,
     spawnQueue: [],
     gameOver: false,
     victory: false,
+    speed: 1,       // 1x or 2x
+    showTips: true, // tip overlay toggle
   };
 
   // UI tower cards
@@ -254,16 +266,16 @@
   // Enemy class
   class Enemy{
     constructor(kind){
-      this.kind = kind; // key in GooseTypes
+      this.kind = kind;
       const t = GooseTypes[kind];
       this.maxHp = t.hp;
       this.hp = t.hp;
-      this.speed = t.speed; // px/sec
+      this.speed = t.speed;
       this.reward = t.reward;
       this.radius = t.radius;
       this.color = t.color;
       this.pos = {x:WAYPOINTS[0].x, y:WAYPOINTS[0].y};
-      this.wp = 1; // next waypoint index
+      this.wp = 1;
       this.dead = false;
     }
     update(dt){
@@ -310,7 +322,7 @@
 
   class Projectile{
     constructor(opts){
-      Object.assign(this, opts); // pos, vel, dmg, color, radius, pierce, splash, ownerId
+      Object.assign(this, opts);
       this.dead = false;
       this.hitCount = 0;
     }
@@ -318,9 +330,7 @@
       if(this.dead) return;
       this.pos.x += this.vel.x * dt;
       this.pos.y += this.vel.y * dt;
-      // offscreen cleanup
       if(this.pos.x < -20 || this.pos.x > WIDTH+20 || this.pos.y < -20 || this.pos.y > HEIGHT+20) this.dead = true;
-      // collisions
       for(const e of state.enemies){
         if(e.dead) continue;
         const d = dist(this.pos, e.pos);
@@ -358,14 +368,13 @@
 
   class Tower{
     constructor(id, x, y){
-      this.id = id; // key in TowerDefs
+      this.id = id;
       this.def = TowerDefs[id];
       this.x = x; this.y = y;
-      this.cool = 0; // fire cooldown seconds
+      this.cool = 0;
     }
     update(dt){
       this.cool -= dt; if(this.cool < 0) this.cool = 0;
-      // acquire nearest enemy in range
       let target=null, td=Infinity;
       for(const e of state.enemies){
         if(e.dead) continue;
@@ -376,10 +385,8 @@
 
       if(this.def.type === 'melee'){
         if(this.cool <= 0){
-          // damage directly to target (and soft splash to nearby geese)
           target.hp -= this.def.dmg * getDamageMult(this.id, target.kind);
           if(target.hp <= 0 && !target.dead){ target.dead = true; state.money += target.reward; UI.money.textContent = state.money; }
-          // tiny cleave
           for(const e2 of state.enemies){
             if(e2===target || e2.dead) continue;
             if(Math.hypot(e2.pos.x - this.x, e2.pos.y - this.y) <= this.def.range*0.6){
@@ -393,7 +400,6 @@
       }
 
       if(this.cool > 0) return;
-      // fire a projectile towards target
       const dx = target.pos.x - this.x;
       const dy = target.pos.y - this.y;
       const d = Math.hypot(dx, dy)||1;
@@ -415,13 +421,11 @@
     draw(){
       ctx.save();
       ctx.translate(this.x, this.y);
-      // base
       ctx.fillStyle = this.def.color;
       ctx.beginPath();
       ctx.arc(0,0, 14, 0, Math.PI*2);
       ctx.fill();
       ctx.lineWidth = 3; ctx.strokeStyle = '#1f2937'; ctx.stroke();
-      // icon/emoji hint
       ctx.font = 'bold 12px system-ui';
       ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle = '#111827';
       const icon = this.id==='mom'?'💣': this.id==='dad'?'🎳': this.id==='jake'?'🪨': this.id==='alex'?'🗡️': this.id==='wasabi'?'🐾':'🏋️';
@@ -444,24 +448,20 @@
     for(const [kind,count] of w.list){
       for(let i=0;i<count;i++) state.spawnQueue.push(kind);
     }
-    state.spawnTimer = 0; // spawn immediately
+    state.spawnTimer = 0;
   }
 
   function checkWaveClear(){
     if(!state.inWave) return;
     const anyAlive = state.enemies.some(e=>!e.dead) || state.spawnQueue.length>0;
     if(!anyAlive){
-      // wave finished
       state.inWave = false;
-      // Next wave or victory
       if(state.waveIndex < WAVES.length-1){
         state.waveIndex++;
         UI.wave.textContent = (state.waveIndex+1);
-        // bonus money
         state.money += 50 + state.waveIndex*10;
         UI.money.textContent = state.money;
-        // update high score (waves cleared)
-        const cleared = state.waveIndex; // just finished previous wave
+        const cleared = state.waveIndex;
         updateHighScore(cleared);
       } else {
         endGame(true);
@@ -472,7 +472,7 @@
   function endGame(victory){
     state.gameOver = true;
     state.victory = victory;
-    const cleared = victory? WAVES.length : state.waveIndex; // if died during wave N+1, count N
+    const cleared = victory? WAVES.length : state.waveIndex;
     updateHighScore(cleared);
   }
 
@@ -498,10 +498,9 @@
     if(state.money < def.cost) return alert('Not enough money.');
     const p = {x:mouse.x, y:mouse.y};
     if(inNoBuild(p)){
-      flashMsg('Cannot build on the path or river.');
+      flashMsg('Cannot build on the path, river, or bridge.');
       return;
     }
-    // too close to other towers?
     for(const t of state.towers){ if(Math.hypot(t.x-p.x, t.y-p.y) < 34) { flashMsg('Too close to another tower.'); return; } }
     state.towers.push(new Tower(id, p.x, p.y));
     state.money -= def.cost; UI.money.textContent = state.money;
@@ -510,8 +509,8 @@
 
   function inNoBuild(p){
     if(pointNearPath(p)) return true;
-    if(pointInRect(p, RIVER) && !pointInRect(p, BRIDGE)) return true; // allow the bridge visual rectangle but better to disallow building on bridge too
-    if(pointInRect(p, BRIDGE)) return true; // disallow bridge to keep it tidy
+    if(pointInRect(p, RIVER) && !pointInRect(p, BRIDGE)) return true;
+    if(pointInRect(p, BRIDGE)) return true;
     return false;
   }
 
@@ -521,15 +520,12 @@
 
   // Draw map
   function drawMap(){
-    // grass
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--grass');
     ctx.fillRect(0,0, WIDTH, HEIGHT);
 
-    // river
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--river');
     roundRect(RIVER.x, RIVER.y, RIVER.w, RIVER.h, 18); ctx.fill();
 
-    // bridge (visual)
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bridge');
     roundRect(BRIDGE.x, BRIDGE.y, BRIDGE.w, BRIDGE.h, 10); ctx.fill();
 
@@ -542,7 +538,7 @@
     for(let i=1;i<WAYPOINTS.length;i++) ctx.lineTo(WAYPOINTS[i].x, WAYPOINTS[i].y);
     ctx.stroke();
 
-    // Bridge planks lines over the dirt where it crosses river
+    // Bridge planks
     ctx.strokeStyle = '#5b3a1d';
     ctx.lineWidth = 6;
     for(let x=BRIDGE.x+10; x<BRIDGE.x+BRIDGE.w-10; x+=18){
@@ -561,36 +557,31 @@
   }
 
   function drawUIOverlays(dt){
-    // placement radius
     if(state.placing && mouse.onCanvas){
       const {def} = state.placing;
       ctx.save();
       ctx.globalAlpha = 0.15; ctx.fillStyle = def.color; ctx.beginPath(); ctx.arc(mouse.x, mouse.y, def.range, 0, Math.PI*2); ctx.fill();
       ctx.globalAlpha = 1; ctx.strokeStyle = def.color; ctx.setLineDash([6,6]); ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(mouse.x, mouse.y, def.range, 0, Math.PI*2); ctx.stroke(); ctx.setLineDash([]);
-      // invalid placement hint
       if(inNoBuild({x:mouse.x,y:mouse.y}) || state.towers.some(t=>Math.hypot(t.x-mouse.x, t.y-mouse.y)<34)){
         ctx.fillStyle = '#ef4444'; ctx.font = 'bold 14px system-ui'; ctx.textAlign='center'; ctx.fillText('🚫 No build', mouse.x, mouse.y- def.range - 10);
       }
       ctx.restore();
     }
 
-    // wave banner and hints
-    if(!state.inWave && !state.gameOver){
+    if(state.showTips && !state.inWave && !state.gameOver){
       ctx.save();
       ctx.fillStyle = '#00000055';
-      ctx.fillRect(16, 16, 260, 60);
+      ctx.fillRect(16, 16, 300, 72);
       ctx.fillStyle = '#fff';
       ctx.font = '700 16px system-ui';
       ctx.fillText(`Upcoming: ${WAVES[state.waveIndex].name}`, 26, 42);
       ctx.font = '12px system-ui';
-      ctx.fillText('Tip: place Wasabi near tight corners for max claw hits!', 26, 62);
+      ctx.fillText('Tip: place Alex/Wasabi inside the U for max hits!', 26, 62);
       ctx.restore();
     }
 
-    // toast
     if(toastTimer>0){ toastTimer-=dt; ctx.save(); ctx.globalAlpha = Math.min(1, toastTimer/0.2); ctx.fillStyle='#111827cc'; ctx.fillRect(WIDTH/2-150, 20, 300, 36); ctx.fillStyle='#fff'; ctx.font='bold 14px system-ui'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(toastText, WIDTH/2, 38); ctx.restore(); }
 
-    // game over / victory
     if(state.gameOver){
       ctx.save();
       ctx.fillStyle = '#000000aa'; ctx.fillRect(0,0,WIDTH,HEIGHT);
@@ -604,17 +595,20 @@
   }
 
   function update(dt){
+    // apply speed multiplier
+    dt *= state.speed;
+
     if(state.inWave){
       state.spawnTimer -= dt;
       if(state.spawnTimer <= 0 && state.spawnQueue.length>0){
         const kind = state.spawnQueue.shift();
         state.enemies.push(new Enemy(kind));
-        state.spawnTimer = 0.55; // spawn cadence
+        state.spawnTimer = 0.55;
       }
     }
 
     for(const e of state.enemies) e.update(dt);
-    state.enemies = state.enemies.filter(e=>!e.dead || e.hp>0); // keep those that either alive or reached end? note: reached end sets dead=true; filtered out
+    state.enemies = state.enemies.filter(e=>!e.dead || e.hp>0);
 
     for(const t of state.towers) t.update(dt);
 
@@ -627,19 +621,17 @@
   function draw(){
     drawMap();
 
-    // range rings on hover over a tower
+    // draw enemies
+    for(const e of state.enemies) e.draw();
+
+    for(const p of state.projectiles) p.draw();
+
+    // towers (with hover range)
     let hoverIdx = -1;
     for(let i=0;i<state.towers.length;i++){
       const t = state.towers[i];
       if(Math.hypot(mouse.x - t.x, mouse.y - t.y) < 16) hoverIdx = i;
     }
-
-    // enemies under towers ordering? draw path -> range -> towers -> projectiles -> enemies -> overlays
-    // draw enemies behind projectiles for clarity
-    for(const e of state.enemies) e.draw();
-
-    for(const p of state.projectiles) p.draw();
-
     for(let i=0;i<state.towers.length;i++){
       const t = state.towers[i];
       if(i===hoverIdx){
@@ -661,13 +653,47 @@
 
   let last = performance.now();
   function frame(now){
-    const dt = Math.min(0.033, (now - last)/1000); // clamp dt
+    const dt = Math.min(0.033, (now - last)/1000);
     last = now;
     update(dt);
     ctx.clearRect(0,0,WIDTH,HEIGHT);
     draw();
     drawUIOverlays(dt);
     requestAnimationFrame(frame);
+  }
+
+  // Speed toggle, Tips toggle, Damage multipliers panel
+  UI.speed.addEventListener('click', ()=>{
+    state.speed = state.speed===1 ? 2 : 1;
+    UI.speed.textContent = `⏩ Speed x${state.speed}`;
+  });
+  UI.tips.addEventListener('click', ()=>{
+    state.showTips = !state.showTips;
+    UI.tips.textContent = state.showTips ? '💡 Tips: On' : '💡 Tips: Off';
+  });
+
+  UI.dmgBtn.addEventListener('click', ()=>{
+    if(UI.dmgPanel.style.display==='none'){ renderDmgPanel(); UI.dmgPanel.style.display='block'; }
+    else { UI.dmgPanel.style.display='none'; }
+  });
+
+  function renderDmgPanel(){
+    // Build a friendly summary of strengths/weaknesses per tower
+    const gooseOrder = Object.keys(GooseTypes);
+    let html = '<p><strong>How it works:</strong> each tower has multipliers vs goose types. >1.0 = stronger, <1.0 = weaker.</p>';
+    html += '<div class="dmg-grid">';
+    for(const [tid, tDef] of Object.entries(TowerDefs)){
+      const mults = DMG_MULTI[tid] || {};
+      const strong = gooseOrder.filter(g=> (mults[g]||1) > 1.05).map(g=>GooseTypes[g].name);
+      const weak   = gooseOrder.filter(g=> (mults[g]||1) < 0.95).map(g=>GooseTypes[g].name);
+      html += `<div class="dmg-card">
+        <h4>${tDef.name}</h4>
+        <div><span class="good">Strong vs:</span> ${strong.length? strong.join(', ') : '—'}</div>
+        <div><span class="bad">Weak vs:</span> ${weak.length? weak.join(', ') : '—'}</div>
+      </div>`;
+    }
+    html += '</div>';
+    UI.dmgPanel.innerHTML = html;
   }
 
   // Hook up UI
